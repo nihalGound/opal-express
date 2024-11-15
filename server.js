@@ -1,183 +1,176 @@
-const express = require("express")
-const cors = require("cors")
-const { Server } = require('socket.io')
-const fs = require("fs")
-const http = require("http")
-const dotenv = require("dotenv")
-const { Readable } = require("stream")
-const axios = require("axios")
-// const {S3Client, PutObjectCommand} = require("@aws-sdk/client-s3")
-// const OpenAI = require("openai")
-const cloudinary = require("cloudinary").v2
+const express = require("express");
+const cors = require("cors");
+const { Server } = require('socket.io');
+const fs = require("fs");
+const http = require("http");
+const dotenv = require("dotenv");
+const { Readable } = require("stream");
+const axios = require("axios");
+const cloudinary = require("cloudinary").v2;
+const path = require("path"); // Add this for path handling
 
-const app = express()
-const server = http.createServer(app)
-app.use(cors())
-dotenv.config()
+const app = express();
+const server = http.createServer(app);
 
+// Enhanced CORS configuration
+app.use(cors({
+  origin: [process.env.ELECTRON_HOST],
+  methods: ['GET', 'POST'],
+  credentials: true,
+}));
+
+dotenv.config();
+
+// Set axios default headers
+axios.defaults.headers.common["Origin"] = 'https://opal-express-gc8f.onrender.com';
+axios.defaults.headers.common["Content-Type"] = "application/json";
+
+// Cloudinary configuration
 cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-})
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
-// const openai = new OpenAI({
-//     apikey: process.env.OPEN_AI_KEY,
-// })
-
-// const s3 = new S3Client({
-//     credentials: {
-//         accessKeyId: process.env.ACCESS_KEY,
-//         secretAccessKey: process.env.SECRET_KEY,
-//     },
-//     region: process.env.BUCKET_REGION
-// })
-
+// Socket.IO configuration with better error handling
 const io = new Server(server, {
-    cors: {
-        origin: '*',
-        methods: ["GET", "POST"],
-    },
-})
+  cors: {
+    origin: ['http://localhost:3000', process.env.NEXT_API_HOST],
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  pingTimeout: 60000,
+  maxHttpBufferSize: 1e8 // 100 MB max buffer size
+});
 
-let recordedChunks = [];
+// Ensure temp_upload directory exists
+const uploadDir = path.join(__dirname, 'temp_upload');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Store chunks per socket connection
+const socketChunks = new Map();
 
 io.on("connection", (socket) => {
-    console.log("🟢 Socket is connected")
-    socket.on("video-chunks", async (data) => {
-        console.log("🟢 Video chunk is sent", data)
-        const writeStream = fs.createWriteStream("temp_upload/" + data.filename)
-        recordedChunks.push(data.chunks)
-        const videoBlob = new Blob(recordedChunks, {
-            type: "video/webm; codecs=vp9",
-        })
-        const buffer = Buffer.from(await videoBlob.arrayBuffer())
-        const readStream = Readable.from(buffer)
-        readStream.pipe(writeStream).on("finish", () => {
-            console.log("🟢 Chunk Saved")
-        })
+  console.log("🟢 Socket connected:", socket.id);
+  socketChunks.set(socket.id, []);
 
-    })
-    socket.on("process-video", async (data) => {
-        console.log("🟢 Video is processing", data)
-        recordedChunks = []
-        fs.readFile("temp_upload/" + data.filename, async (err, file) => {
-            if (err) {
-                console.log("🔴 Error reading file", err);
-                return;
+  socket.on("video-chunks", async (data) => {
+    try {
+      console.log("🟢 Receiving video chunk for:", data.filename);
+      
+      const chunks = socketChunks.get(socket.id);
+      chunks.push(data.chunks);
+      
+      const filePath = path.join(uploadDir, data.filename);
+      const writeStream = fs.createWriteStream(filePath);
+      
+      const videoBlob = new Blob(chunks, {
+        type: "video/webm; codecs=vp9",
+      });
+      
+      const buffer = Buffer.from(await videoBlob.arrayBuffer());
+      const readStream = Readable.from(buffer);
+      
+      readStream.pipe(writeStream);
+      
+      writeStream.on("finish", () => {
+        console.log("🟢 Chunk saved for:", data.filename);
+      });
+
+      writeStream.on("error", (error) => {
+        console.error("🔴 Error saving chunk:", error);
+        socket.emit("upload-error", { message: "Failed to save video chunk" });
+      });
+    } catch (error) {
+      console.error("🔴 Error processing video chunk:", error);
+      socket.emit("upload-error", { message: "Failed to process video chunk" });
+    }
+  });
+
+  socket.on("process-video", async (data) => {
+    try {
+      console.log("🟢 Processing video:", data.filename);
+      socketChunks.set(socket.id, []); // Clear chunks
+
+      const filePath = path.join(uploadDir, data.filename);
+
+      // Verify file exists
+      if (!fs.existsSync(filePath)) {
+        throw new Error("Video file not found");
+      }
+
+      // Start processing
+      const processing = await axios.post(
+        `${process.env.NEXT_API_HOST}recording/${data.userId}/processing`,
+        { filename: data.filename }
+      );
+
+      if (processing.data.status !== 200) {
+        throw new Error("Failed to create processing file");
+      }
+
+      // Upload to Cloudinary
+      const cloudinaryUpload = cloudinary.uploader.upload_stream(
+        {
+          resource_type: "video",
+          folder: "opal",
+          public_id: data.filename,
+        },
+        async (error, result) => {
+          try {
+            if (error) {
+              throw error;
             }
 
-            const processing = await axios.post(`${process.env.NEXT_API_HOST}recording/${data.userId}/processing`,{
-                filename: data.filename
-            })
-            if (processing.data.status !== 200) return console.log("🔴 Error: Something went wrong with creating the processing file")
-
-            const cloudinaryUpload = await cloudinary.uploader.upload_stream(
-                {
-                    resource_type: "video",
-                    folder: "opal",
-                    public_id: data.filename,
-                },
-                async (err, result) => {
-                    if (err) {
-                        console.log("🔴 Error uploading file on cloudinary")
-                    }
-                    console.log("🟢 Video uploaded to cloudinary : ", result.secure_url);
-                    const stopProcessing = await axios.post(
-                        `${process.env.NEXT_API_HOST}recording/${data.userId}/complete`,
-                        { filename: data.filename }
-                    )
-                    if (stopProcessing.data.status !== 200) {
-                        console.log("🔴 Error: Something went wrong when stopping the process and trying to complete the processing stage.")
-                    }
-
-                    if (stopProcessing.data.status === 200) {
-                        fs.unlink("temp_upload/" + data.filename, (err) => {
-                            if (!err) console.log(data.filename + " " + "🟢 deleted successfuly")
-                        })
-                    }
-                }
+            console.log("🟢 Video uploaded to Cloudinary:", result.secure_url);
+            
+            // Complete processing
+            const stopProcessing = await axios.post(
+              `${process.env.NEXT_API_HOST}recording/${data.userId}/complete`,
+              { filename: data.filename }
             );
 
-            fs.createReadStream("temp_upload/" + data.filename).pipe(cloudinaryUpload);
-            // const processing = await axios.post(`${process.env.NEXT_API_HOST}recording/${data.userId}/processing`)
-            // if(processing.data.status !==200) return console.log("🔴 Error: Something went wrong with creating the processing file")
-            // const Key = data.filename
-            // const Bucket = process.env.BUCKET_NAME
-            // const ContentType = "video/webm"
-            // const command = new PutObjectCommand({
-            //     Key,
-            //     Bucket,
-            //     ContentType,
-            //     Body: file,
-            // })
+            if (stopProcessing.data.status !== 200) {
+              throw new Error("Failed to complete processing");
+            }
 
-            // const fileStatus = await s3.send(command)
+            // Clean up
+            fs.unlink(filePath, (err) => {
+              if (err) {
+                console.error("🔴 Error deleting file:", err);
+              } else {
+                console.log("🟢 Deleted file:", data.filename);
+              }
+            });
 
-            // if (fileStatus['$metadata'].httpStatusCode === 200) {
-            //     console.log("🟢 Video uploaded to AWS")
+          } catch (error) {
+            console.error("🔴 Error in Cloudinary upload callback:", error);
+          }
+        }
+      );
 
-            //     if(processing.data.plan === "PRO") {
-            //         fs.stat("temp_upload/" + data.filename, async (err,stat) => {
-            //             if(!err) {
-            //                 if(stat.size < 25000000) {
-            //                     const transcription = await openai.audio.transcriptions.create({
-            //                         file: fs.createReadStream(`temp_upload/${data.filename}`),
-            //                         model: "whisper-1",
-            //                         response_format: "text",
-            //                     })
+      fs.createReadStream(filePath).pipe(cloudinaryUpload);
 
-            //                     if (transcription) {
-            //                         const completion = await openai.chat.completions.create({
-            //                             model: "gpt-3.5-turbo",
-            //                             response_format: { type: "json_object" },
-            //                             message: [
-            //                                 {
-            //                                     role: "system",
-            //                                     content: `You are going to generate a title and nice description using the speech to text transcription provided : transcription(${transcription}) and then return it in json format as {"title": <the title you gave>, "summery": <the summary you created>}`,
-            //                                 },
-            //                             ],
-            //                         })
-            //                         const titleSummaryGenerated = await axios.post(`${process.env.NEXT_API_HOST}recording/${data.userId}/transcribe`, {
-            //                             filename: data.filename,
-            //                             content: completion.choices[0].message.content,
-            //                             transcript: transcription,
-            //                         })
+    } catch (error) {
+      console.error("🔴 Error processing video:", error);
+    }
+  });
 
-            //                         if(titleSummaryGenerated.data.status !==200) {
-            //                             console.log("🔴 Error: Something went wrong with creating the title and description")
-            //                         }
+  socket.on("disconnect", () => {
+    console.log("🔴 Socket disconnected:", socket.id);
+    socketChunks.delete(socket.id); // Clean up chunks
+  });
+});
 
-            //                     }
-            //                 }
-            //             }
-            //         })
-            //     }
-            //     const stopProcessing = await axios.post(
-            //         `${processing.env.NEXT_API_HOST}recording/${data.userId}/complete`,
-            //         {filename: data.filename}
-            //     )
-            //     if(stopProcessing.data.status !== 200) {
-            //         console.log("🔴 Error: Something went wrong when stopping the process and trying to complete the processing stage.")
-            //     }
+// Error handling for unhandled rejections
+process.on('unhandledRejection', (error) => {
+  console.error('🔴 Unhandled Rejection:', error);
+});
 
-            //     if(stopProcessing.data.status === 200) {
-            //         fs.unlink("temp_upload/" + data.filename, (err) => {
-            //             if(!err) console.log(data.filename + " " + "🟢 deleted successfuly")
-            //         })
-            //     }
-
-            // } else {
-            //     console.log("🔴 Error. Upload failed!")
-            // }
-
-        })
-    })
-    socket.on("disconnect", async (data) => {
-        console.log("🔴 Disconnected from socket io")
-    })
-})
-server.listen(5000, () => {
-    console.log("🟢 Listening on port 5000")
-})
-
+// Start server
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log(`🟢 Server listening on port ${PORT}`);
+});
