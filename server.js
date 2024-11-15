@@ -84,7 +84,7 @@ io.on("connection", (socket) => {
                     }
                     console.log("🟢 Video uploaded to cloudinary : ", result.secure_url);
                     const stopProcessing = await axios.post(
-                        `${processing.env.NEXT_API_HOST}recording/${data.userId}/complete`,
+                        `${process.env.NEXT_API_HOST}recording/${data.userId}/complete`,
                         { filename: data.filename }
                     )
                     if (stopProcessing.data.status !== 200) {
