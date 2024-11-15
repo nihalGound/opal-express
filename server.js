@@ -35,7 +35,7 @@ cloudinary.config({
 // Socket.IO configuration with better error handling
 const io = new Server(server, {
   cors: {
-    origin: ['http://localhost:3000', process.env.NEXT_API_HOST],
+    origin: [process.env.ELECTRON_HOST],
     methods: ["GET", "POST"],
     credentials: true
   },
