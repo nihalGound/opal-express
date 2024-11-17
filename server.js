@@ -166,6 +166,8 @@ process.on('unhandledRejection', (error) => {
 
 // Start server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`🟢 Server listening on port ${PORT}`);
+  const response = await axios.get(`${process.env.NEXT_API_HOST}testing`);
+  console.log(response.data);
 });
