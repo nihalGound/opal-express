@@ -22,7 +22,7 @@ app.use(cors({
 dotenv.config();
 
 // Set axios default headers
-axios.defaults.headers.common["Origin"] = 'https://opal-express-gc8f.onrender.com';
+axios.defaults.headers.common["origin"] = 'https://opal-express-gc8f.onrender.com';
 axios.defaults.headers.common["Content-Type"] = "application/json";
 
 // Cloudinary configuration
@@ -38,9 +38,7 @@ const io = new Server(server, {
     origin: [process.env.ELECTRON_HOST],
     methods: ["GET", "POST"],
     credentials: true
-  },
-  pingTimeout: 60000,
-  maxHttpBufferSize: 1e8 // 100 MB max buffer size
+  }
 });
 
 // Ensure temp_upload directory exists
