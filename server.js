@@ -7,23 +7,19 @@ const dotenv = require("dotenv");
 const { Readable } = require("stream");
 const axios = require("axios");
 const cloudinary = require("cloudinary").v2;
-const path = require("path"); // Add this for path handling
+const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
 
-// Enhanced CORS configuration
-app.use(cors({
-  origin: [process.env.ELECTRON_HOST],
-  methods: ['GET', 'POST'],
-  credentials: true,
-}));
+app.use(cors())
 
 dotenv.config();
 
-// Set axios default headers
-axios.defaults.headers.common["origin"] = 'https://opal-express-gc8f.onrender.com';
-axios.defaults.headers.common["Content-Type"] = "application/json";
+
+// // Set axios default headers
+// axios.defaults.headers.common["origin"] = 'https://opal-express-gc8f.onrender.com';
+// axios.defaults.headers.common["Content-Type"] = "application/json";
 
 // Cloudinary configuration
 cloudinary.config({
@@ -37,10 +33,8 @@ const io = new Server(server, {
   cors: {
     origin: [process.env.ELECTRON_HOST],
     methods: ["GET", "POST"],
-    credentials: true
   }
 });
-
 // Ensure temp_upload directory exists
 const uploadDir = path.join(__dirname, 'temp_upload');
 if (!fs.existsSync(uploadDir)) {
@@ -53,6 +47,8 @@ const socketChunks = new Map();
 io.on("connection", (socket) => {
   console.log("🟢 Socket connected:", socket.id);
   socketChunks.set(socket.id, []);
+
+  socket.emit("connected");
 
   socket.on("video-chunks", async (data) => {
     try {
@@ -155,6 +151,7 @@ io.on("connection", (socket) => {
       console.error("🔴 Error processing video:", error);
     }
   });
+
 
   socket.on("disconnect", () => {
     console.log("🔴 Socket disconnected:", socket.id);
