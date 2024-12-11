@@ -12,7 +12,9 @@ const path = require("path");
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors())
+app.use(cors({
+  origin: ["*"]
+}))
 
 dotenv.config();
 
@@ -168,6 +170,4 @@ process.on('unhandledRejection', (error) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, async () => {
   console.log(`🟢 Server listening on port ${PORT}`);
-  const response = await axios.get(`${process.env.NEXT_API_HOST}testing`);
-  console.log(response.data);
 });
