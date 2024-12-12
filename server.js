@@ -10,13 +10,11 @@ const cloudinary = require("cloudinary").v2;
 const path = require("path");
 
 const app = express();
+app.use(cors())
+dotenv.config();
 const server = http.createServer(app);
 
-app.use(cors({
-  origin: ["*"]
-}))
 
-dotenv.config();
 
 
 // // Set axios default headers
@@ -33,10 +31,10 @@ cloudinary.config({
 // Socket.IO configuration with better error handling
 const io = new Server(server, {
   cors: {
-    origin: ["*"],
-    methods: ["GET", "POST"],
-  }
-});
+      origin: '*',
+      methods: ["GET", "POST"],
+  },
+})
 // Ensure temp_upload directory exists
 const uploadDir = path.join(__dirname, 'temp_upload');
 if (!fs.existsSync(uploadDir)) {
@@ -171,3 +169,5 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, async () => {
   console.log(`🟢 Server listening on port ${PORT}`);
 });
+
+
